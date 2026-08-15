@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     kgd_sender_password: str = ""
     kgd_service_key: str = "FNO_INTEGRATION_STATUS"
 
+    # Kaspi POS Automation integration
+    kaspi_pos_url: str = "http://localhost:3001"
+    kaspi_pos_token_sn: str = ""
+    kaspi_pos_vtoken_secret: str = ""
+    kaspi_pos_profile_id: str = ""
+    kaspi_webhook_secret: str = "salyq-webhook-secret-change-me"
+    # Service fee in KZT (what user pays for declaration filing)
+    service_fee_amount: int = 2000
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
