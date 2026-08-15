@@ -1,5 +1,3 @@
-import asyncio
-import base64
 import logging
 import uuid
 
@@ -82,8 +80,8 @@ class QrStatusResponse(BaseModel):
     user: UserInfo | None = None
 
 
-async def _send_data_to_sigex(data_url: str, challenge_b64: str):
-    """Background task: send challenge data to SIGEX for eGov Mobile to pick up."""
+async def _send_data_to_sigex(data_url: str, nonce_b64: str):
+    """Background task: send nonce data to SIGEX for eGov Mobile to pick up."""
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
             await client.post(
@@ -96,7 +94,7 @@ async def _send_data_to_sigex(data_url: str, challenge_b64: str):
                             "document": {
                                 "file": {
                                     "mime": "text/plain",
-                                    "data": challenge_b64,
+                                    "data": nonce_b64,
                                 }
                             },
                         }
@@ -113,16 +111,26 @@ async def _send_data_to_sigex(data_url: str, challenge_b64: str):
 async def create_qr_session(background_tasks: BackgroundTasks):
     """Create a SIGEX eGov QR auth session.
 
-    1. Generate a challenge.
-    2. Register QR procedure with SIGEX (returns QR code + URLs).
+    1. Get a nonce from SIGEX auth API.
+    2. Register QR procedure with SIGEX egovQr.
     3. Return QR code immediately.
-    4. Send challenge data to SIGEX in background (non-blocking).
+    4. Send nonce as data to sign in background.
     """
-    challenge = generate_challenge()
-    challenge_b64 = base64.b64encode(challenge.encode()).decode()
-
-    # Step 1: Register QR procedure (fast, ~1-2s)
     async with httpx.AsyncClient(timeout=15.0) as client:
+        # Step 1: Get nonce from SIGEX auth
+        try:
+            resp = await client.post(f"{settings.sigex_url}/api/auth", json={})
+            resp.raise_for_status()
+        except Exception as e:
+            logger.error(f"SIGEX auth nonce error: {e}")
+            raise HTTPException(status_code=502, detail=f"SIGEX error: {e}")
+
+        nonce_data = resp.json()
+        nonce = nonce_data.get("nonce", "")
+        if not nonce:
+            raise HTTPException(status_code=502, detail="No nonce from SIGEX")
+
+        # Step 2: Register QR procedure
         try:
             resp = await client.post(
                 f"{settings.sigex_url}/api/egovQr",
@@ -141,19 +149,17 @@ async def create_qr_session(background_tasks: BackgroundTasks):
     data_url = qr_data.get("dataURL", "")
     sign_url = qr_data.get("signURL", "")
     expires_at = qr_data.get("expireAt", 0)
-    mobile_link = qr_data.get("eGovMobileLaunchLink", "")
 
     if not qr_code or not data_url or not sign_url:
         raise HTTPException(status_code=502, detail="Invalid SIGEX response")
 
-    # Step 2: Send challenge data in background (non-blocking)
-    background_tasks.add_task(_send_data_to_sigex, data_url, challenge_b64)
+    # Step 3: Send nonce as data to sign in background
+    background_tasks.add_task(_send_data_to_sigex, data_url, nonce)
 
     session_id = str(uuid.uuid4())
     _qr_sessions[session_id] = {
-        "challenge": challenge,
+        "nonce": nonce,
         "sign_url": sign_url,
-        "mobile_link": mobile_link,
         "status": "pending",
     }
 
@@ -166,7 +172,7 @@ async def create_qr_session(background_tasks: BackgroundTasks):
 
 @router.get("/qr/{session_id}/status", response_model=QrStatusResponse)
 async def get_qr_status(session_id: str):
-    """Poll SIGEX for QR auth signature, validate with kalkan, return JWT."""
+    """Poll SIGEX for QR auth signature, verify via SIGEX auth API, return JWT."""
     session = _qr_sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -185,7 +191,7 @@ async def get_qr_status(session_id: str):
     if session["status"] == "expired":
         return QrStatusResponse(status="expired")
 
-    # Poll SIGEX for signature (long-poll, short timeout for our endpoint)
+    # Poll SIGEX for signature (short timeout for our endpoint)
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             resp = await client.get(session["sign_url"])
@@ -204,49 +210,58 @@ async def get_qr_status(session_id: str):
         session["status"] = "expired"
         return QrStatusResponse(status="canceled")
 
-    # Log full SIGEX response for debugging
-    logger.info(f"SIGEX signURL response: {data}")
-
     # Extract CMS signature from signed documents
     docs = data.get("documentsToSign", [])
     if not docs:
         return QrStatusResponse(status="pending")
 
     sig_doc = docs[0]
-    # Try multiple possible locations for the CMS signature
-    sig_data = (
-        sig_doc.get("document", {}).get("file", {}).get("data", "")
-        or sig_doc.get("signature", "")
-        or sig_doc.get("documentXml", "")
-    )
-
-    # Also check for signatures array
-    if not sig_data and "signatures" in sig_doc:
-        sigs = sig_doc["signatures"]
-        if isinstance(sigs, list) and sigs:
-            sig_data = sigs[0].get("signature", "") or sigs[0].get("data", "")
-
+    sig_data = sig_doc.get("document", {}).get("file", {}).get("data", "")
     if not sig_data:
-        logger.warning(f"No signature data found in SIGEX doc: {sig_doc.keys()}")
         return QrStatusResponse(status="pending")
 
-    logger.info(f"Extracted CMS (first 100 chars): {sig_data[:100]}")
+    logger.info(f"QR auth: got CMS signature, verifying via SIGEX auth API")
 
-    # Validate CMS with kalkan
-    try:
-        result = await validate_cms(sig_data)
-    except Exception as e:
-        logger.error(f"Kalkan validation error for QR: {e}")
-        return QrStatusResponse(status="error")
+    # Verify via SIGEX auth API (external mode) — returns IIN and name
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.sigex_url}/api/auth",
+                json={
+                    "nonce": session["nonce"],
+                    "signature": sig_data,
+                    "external": True,
+                },
+            )
+        except Exception as e:
+            logger.error(f"SIGEX auth verify error: {e}")
+            return QrStatusResponse(status="error")
 
-    logger.info(f"Kalkan result: valid={result.valid}, iin={result.subject.iin}, name={result.subject.full_name}")
-
-    if not result.valid:
+    if resp.status_code != 200:
+        logger.error(f"SIGEX auth verify failed: {resp.status_code} {resp.text}")
         session["status"] = "expired"
         return QrStatusResponse(status="failed")
 
+    auth_data = resp.json()
+    iin = auth_data.get("userId", "")
+    subject = auth_data.get("subject", "")
+
+    # Parse name from subject string: "SERIALINUMBER=IIN...,CN=Name..."
+    full_name = ""
+    for part in subject.split(","):
+        if part.strip().startswith("CN="):
+            full_name = part.strip()[3:]
+            break
+
+    if not iin:
+        logger.error(f"SIGEX auth: no IIN in response: {auth_data}")
+        session["status"] = "expired"
+        return QrStatusResponse(status="failed")
+
+    logger.info(f"QR auth success: iin={iin}, name={full_name}")
+
     # Issue JWT
-    user = UserInfo(iin=result.subject.iin, fullName=result.subject.full_name)
+    user = UserInfo(iin=iin, fullName=full_name)
     token_data = {"sub": user.iin, "name": user.fullName}
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
