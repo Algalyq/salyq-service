@@ -1,9 +1,10 @@
+import asyncio
 import base64
 import logging
 import uuid
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
@@ -81,45 +82,10 @@ class QrStatusResponse(BaseModel):
     user: UserInfo | None = None
 
 
-@router.post("/qr/create", response_model=QrCreateResponse)
-async def create_qr_session():
-    """Create a SIGEX eGov QR auth session.
-
-    1. Generate a challenge.
-    2. Register QR procedure with SIGEX.
-    3. Send challenge as data to sign.
-    4. Return QR code image for frontend to display.
-    """
-    challenge = generate_challenge()
-    challenge_b64 = base64.b64encode(challenge.encode()).decode()
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Step 1: Register QR procedure
-        try:
-            resp = await client.post(
-                f"{settings.sigex_url}/api/egovQr",
-                json={
-                    "description": "Salyq Service authentication",
-                    "whenDone": {"backUrl": ""},
-                },
-            )
-            resp.raise_for_status()
-        except Exception as e:
-            logger.error(f"SIGEX QR create error: {e}")
-            raise HTTPException(status_code=502, detail=f"SIGEX error: {e}")
-
-        qr_data = resp.json()
-        qr_code = qr_data.get("qrCode", "")
-        data_url = qr_data.get("dataURL", "")
-        sign_url = qr_data.get("signURL", "")
-        expires_at = qr_data.get("expireAt", 0)
-        mobile_link = qr_data.get("eGovMobileLaunchLink", "")
-
-        if not qr_code or not data_url or not sign_url:
-            raise HTTPException(status_code=502, detail="Invalid SIGEX response")
-
-        # Step 2: Send challenge data to sign
-        try:
+async def _send_data_to_sigex(data_url: str, challenge_b64: str):
+    """Background task: send challenge data to SIGEX for eGov Mobile to pick up."""
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             await client.post(
                 data_url,
                 json={
@@ -137,10 +103,51 @@ async def create_qr_session():
                     ],
                 },
             )
-        except httpx.TimeoutException:
-            pass  # Expected — SIGEX holds connection until eGov Mobile reads data
+    except httpx.TimeoutException:
+        pass  # Expected — SIGEX holds connection until eGov Mobile reads data
+    except Exception as e:
+        logger.warning(f"SIGEX data send error: {e}")
+
+
+@router.post("/qr/create", response_model=QrCreateResponse)
+async def create_qr_session(background_tasks: BackgroundTasks):
+    """Create a SIGEX eGov QR auth session.
+
+    1. Generate a challenge.
+    2. Register QR procedure with SIGEX (returns QR code + URLs).
+    3. Return QR code immediately.
+    4. Send challenge data to SIGEX in background (non-blocking).
+    """
+    challenge = generate_challenge()
+    challenge_b64 = base64.b64encode(challenge.encode()).decode()
+
+    # Step 1: Register QR procedure (fast, ~1-2s)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.post(
+                f"{settings.sigex_url}/api/egovQr",
+                json={
+                    "description": "Salyq Service authentication",
+                    "whenDone": {"backUrl": ""},
+                },
+            )
+            resp.raise_for_status()
         except Exception as e:
-            logger.warning(f"SIGEX data send (may be ok): {e}")
+            logger.error(f"SIGEX QR create error: {e}")
+            raise HTTPException(status_code=502, detail=f"SIGEX error: {e}")
+
+    qr_data = resp.json()
+    qr_code = qr_data.get("qrCode", "")
+    data_url = qr_data.get("dataURL", "")
+    sign_url = qr_data.get("signURL", "")
+    expires_at = qr_data.get("expireAt", 0)
+    mobile_link = qr_data.get("eGovMobileLaunchLink", "")
+
+    if not qr_code or not data_url or not sign_url:
+        raise HTTPException(status_code=502, detail="Invalid SIGEX response")
+
+    # Step 2: Send challenge data in background (non-blocking)
+    background_tasks.add_task(_send_data_to_sigex, data_url, challenge_b64)
 
     session_id = str(uuid.uuid4())
     _qr_sessions[session_id] = {
