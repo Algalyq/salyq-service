@@ -246,6 +246,10 @@ async def get_qr_status(session_id: str):
     iin = auth_data.get("userId", "")
     subject = auth_data.get("subject", "")
 
+    # Strip "IIN" prefix if present (SIGEX returns "IIN030720550970", kalkan returns "030720550970")
+    if iin.startswith("IIN"):
+        iin = iin[3:]
+
     # Parse name from subject string: "SERIALINUMBER=IIN...,CN=Name..."
     full_name = ""
     for part in subject.split(","):
