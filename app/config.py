@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Service fee in KZT (what user pays for declaration filing)
     service_fee_amount: int = 2000
 
+    # SIGEX eGov QR integration
+    sigex_url: str = "https://sigex.kz"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
