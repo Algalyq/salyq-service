@@ -81,10 +81,11 @@ jobs:
           docker run -d \
             --name ${{ steps.vars.outputs.container }} \
             --restart unless-stopped \
+            --add-host=host.docker.internal:host-gateway \
             -p ${{ steps.vars.outputs.port }}:8000 \
             -e JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }} \
-            -e KALKAN_URL=http://localhost:8504 \
-            -e KASPI_POS_URL=http://localhost:8506 \
+            -e KALKAN_URL=http://host.docker.internal:8504 \
+            -e KASPI_POS_URL=http://host.docker.internal:8506 \
             -e KASPI_POS_TOKEN_SN=${{ secrets.KASPI_POS_TOKEN_SN }} \
             -e KASPI_POS_VTOKEN_SECRET=${{ secrets.KASPI_POS_VTOKEN_SECRET }} \
             -e KASPI_POS_PROFILE_ID=${{ secrets.KASPI_POS_PROFILE_ID }} \
