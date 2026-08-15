@@ -204,15 +204,33 @@ async def get_qr_status(session_id: str):
         session["status"] = "expired"
         return QrStatusResponse(status="canceled")
 
+    # Log full SIGEX response for debugging
+    logger.info(f"SIGEX signURL response: {data}")
+
     # Extract CMS signature from signed documents
     docs = data.get("documentsToSign", [])
     if not docs:
         return QrStatusResponse(status="pending")
 
     sig_doc = docs[0]
-    sig_data = sig_doc.get("document", {}).get("file", {}).get("data", "")
+    # Try multiple possible locations for the CMS signature
+    sig_data = (
+        sig_doc.get("document", {}).get("file", {}).get("data", "")
+        or sig_doc.get("signature", "")
+        or sig_doc.get("documentXml", "")
+    )
+
+    # Also check for signatures array
+    if not sig_data and "signatures" in sig_doc:
+        sigs = sig_doc["signatures"]
+        if isinstance(sigs, list) and sigs:
+            sig_data = sigs[0].get("signature", "") or sigs[0].get("data", "")
+
     if not sig_data:
+        logger.warning(f"No signature data found in SIGEX doc: {sig_doc.keys()}")
         return QrStatusResponse(status="pending")
+
+    logger.info(f"Extracted CMS (first 100 chars): {sig_data[:100]}")
 
     # Validate CMS with kalkan
     try:
@@ -220,6 +238,8 @@ async def get_qr_status(session_id: str):
     except Exception as e:
         logger.error(f"Kalkan validation error for QR: {e}")
         return QrStatusResponse(status="error")
+
+    logger.info(f"Kalkan result: valid={result.valid}, iin={result.subject.iin}, name={result.subject.full_name}")
 
     if not result.valid:
         session["status"] = "expired"
