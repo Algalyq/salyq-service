@@ -90,7 +90,7 @@ jobs:
             -e KASPI_POS_PROFILE_ID=${{ secrets.KASPI_POS_PROFILE_ID }} \
             -e KASPI_WEBHOOK_SECRET=${{ secrets.KASPI_WEBHOOK_SECRET }} \
             -e SERVICE_FEE_AMOUNT=${{ vars.SERVICE_FEE_AMOUNT || '2000' }} \
-            -e CORS_ORIGINS=${{ vars.CORS_ORIGINS || 'http://localhost:8502' }} \
+            -e CORS_ORIGINS=${{ vars.CORS_ORIGINS || 'https://salyq.gulzar.kz,https://test.salyq.gulzar.kz' }} \
             -e KGD_SMARTBRIDGE_ENABLED=false \
             ghcr.io/algalyq/salyq-service:${{ steps.vars.outputs.tag }}
 
