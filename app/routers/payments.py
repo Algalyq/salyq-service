@@ -51,6 +51,7 @@ class CreateQrResponse(BaseModel):
     qr_token: str
     qr_original_token: str
     amount: int
+    expire_date: str | None = None
     status: str = "created"
 
 
@@ -112,6 +113,7 @@ async def create_payment_qr(
         qr_token=result.qr_token,
         qr_original_token=result.qr_original_token,
         amount=amount,
+        expire_date=result.expire_date,
     )
 
 

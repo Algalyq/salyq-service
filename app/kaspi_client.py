@@ -19,6 +19,7 @@ class QrCreateResult:
     qr_token: str
     qr_original_token: str
     amount: int
+    expire_date: str | None = None
 
 
 @dataclass
@@ -65,10 +66,11 @@ async def create_qr(amount: int) -> QrCreateResult:
     inner = data.get("Data", data)
 
     return QrCreateResult(
-        operation_id=str(inner.get("Id", inner.get("operationId", ""))),
+        operation_id=str(inner.get("QrOperationId", inner.get("Id", ""))),
         qr_token=inner.get("QrToken", ""),
         qr_original_token=inner.get("QrOriginalToken", ""),
         amount=amount,
+        expire_date=inner.get("ExpireDate"),
     )
 
 
