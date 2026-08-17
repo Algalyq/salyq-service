@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     sigex_url: str = "https://sigex.kz"
 
     # Database
-    database_url: str = "sqlite:///./salyq.db"
+    database_url: str = "postgresql+psycopg://salyq:salyq@localhost:5432/salyq"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

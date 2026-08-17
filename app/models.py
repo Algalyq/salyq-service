@@ -15,11 +15,15 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    iin: Mapped[str] = mapped_column(String(12), index=True, nullable=False)
+    iin: Mapped[str] = mapped_column(String(12), unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     auth_method: Mapped[str] = mapped_column(String(20), nullable=False, default="ncalayer")
+    login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=datetime.datetime.utcnow
+    )
+    last_login_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
     )
 
     payments: Mapped[list["Payment"]] = relationship(back_populates="user")

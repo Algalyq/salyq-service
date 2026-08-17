@@ -1,3 +1,4 @@
+import datetime
 import logging
 import uuid
 
@@ -18,15 +19,26 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _save_user(iin: str, full_name: str, auth_method: str = "ncalayer") -> str:
-    """Save user login to database. Each login creates a new row."""
+    """Find or create user by IIN. Updates login count and last login time."""
     db: Session = SessionLocal()
     try:
-        user = User(iin=iin, full_name=full_name, auth_method=auth_method)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        logger.info(f"User saved: iin={iin}, method={auth_method}, id={user.id}")
-        return user.id
+        user = db.query(User).filter(User.iin == iin).first()
+        if user:
+            user.login_count += 1
+            user.auth_method = auth_method
+            user.last_login_at = datetime.datetime.utcnow()
+            if full_name and full_name != user.full_name:
+                user.full_name = full_name
+            db.commit()
+            logger.info(f"User login: iin={iin}, method={auth_method}, count={user.login_count}")
+            return user.id
+        else:
+            user = User(iin=iin, full_name=full_name, auth_method=auth_method)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            logger.info(f"New user created: iin={iin}, method={auth_method}, id={user.id}")
+            return user.id
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to save user: {e}")
