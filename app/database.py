@@ -23,5 +23,9 @@ def init_db():
     """Create all tables if they don't exist."""
     from app import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        logger.warning("App will continue without DB — some features may not work")
