@@ -54,10 +54,12 @@ jobs:
             echo "tag=latest" >> $GITHUB_OUTPUT
             echo "port=8500" >> $GITHUB_OUTPUT
             echo "container=salyq-service-master" >> $GITHUB_OUTPUT
+            echo "db_name=salyq_prod" >> $GITHUB_OUTPUT
           else
             echo "tag=test" >> $GITHUB_OUTPUT
             echo "port=8501" >> $GITHUB_OUTPUT
             echo "container=salyq-service-test" >> $GITHUB_OUTPUT
+            echo "db_name=salyq_test" >> $GITHUB_OUTPUT
           fi
 
       - name: Log in to GHCR
@@ -93,7 +95,7 @@ jobs:
             -e SERVICE_FEE_AMOUNT=${{ vars.SERVICE_FEE_AMOUNT || '2000' }} \
             -e CORS_ORIGINS=${{ vars.CORS_ORIGINS || 'https://salyq.gulzar.kz,https://salyq-test.gulzar.kz' }} \
             -e KGD_SMARTBRIDGE_ENABLED=false \
-            -e DATABASE_URL=postgresql+psycopg://${{ secrets.POSTGRES_USER || 'salyq' }}:${{ secrets.POSTGRES_PASSWORD || 'salyq' }}@${{ vars.POSTGRES_HOST || 'host.docker.internal' }}:5432/${{ secrets.POSTGRES_DB || 'salyq' }} \
+            -e DATABASE_URL=postgresql+psycopg://${{ secrets.POSTGRES_USER || 'salyq' }}:${{ secrets.POSTGRES_PASSWORD || 'salyq' }}@${{ vars.POSTGRES_HOST || 'host.docker.internal' }}:5432/${{ steps.vars.outputs.db_name }} \
             ghcr.io/algalyq/salyq-service:${{ steps.vars.outputs.tag }}
 
       - name: Cleanup old images
