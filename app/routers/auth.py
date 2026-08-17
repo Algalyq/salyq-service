@@ -4,14 +4,35 @@ import uuid
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.security import generate_challenge, create_access_token, create_refresh_token
 from app.kalkan_client import validate_cms
+from app.database import SessionLocal
+from app.models import User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _save_user(iin: str, full_name: str, auth_method: str = "ncalayer") -> str:
+    """Save user login to database. Each login creates a new row."""
+    db: Session = SessionLocal()
+    try:
+        user = User(iin=iin, full_name=full_name, auth_method=auth_method)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        logger.info(f"User saved: iin={iin}, method={auth_method}, id={user.id}")
+        return user.id
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save user: {e}")
+        return ""
+    finally:
+        db.close()
 
 
 class ChallengeResponse(BaseModel):
@@ -54,6 +75,8 @@ async def login(req: LoginRequest):
 
     user = UserInfo(iin=result.subject.iin, fullName=result.subject.full_name)
     token_data = {"sub": user.iin, "name": user.fullName}
+
+    _save_user(user.iin, user.fullName, auth_method="ncalayer")
 
     return LoginResponse(
         accessToken=create_access_token(token_data),
@@ -263,6 +286,8 @@ async def get_qr_status(session_id: str):
         return QrStatusResponse(status="failed")
 
     logger.info(f"QR auth success: iin={iin}, name={full_name}")
+
+    _save_user(iin, full_name, auth_method="egov_qr")
 
     # Issue JWT
     user = UserInfo(iin=iin, fullName=full_name)

@@ -93,6 +93,8 @@ jobs:
             -e SERVICE_FEE_AMOUNT=${{ vars.SERVICE_FEE_AMOUNT || '2000' }} \
             -e CORS_ORIGINS=${{ vars.CORS_ORIGINS || 'https://salyq.gulzar.kz,https://salyq-test.gulzar.kz' }} \
             -e KGD_SMARTBRIDGE_ENABLED=false \
+            -v salyq-data:/app/data \
+            -e DATABASE_URL=sqlite:////app/data/salyq.db \
             ghcr.io/algalyq/salyq-service:${{ steps.vars.outputs.tag }}
 
       - name: Cleanup old images

@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.kaspi_client import create_qr, check_qr_status
+from app.database import SessionLocal
+from app.models import Payment
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,7 @@ async def create_payment_qr(
         logger.error(f"Failed to create QR: {e}")
         raise HTTPException(status_code=502, detail=f"Kaspi POS error: {e}")
 
-    # Store payment
+    # Store payment in memory (for quick lookup)
     _payments[result.operation_id] = {
         "operation_id": result.operation_id,
         "iin": user["iin"],
@@ -107,6 +109,27 @@ async def create_payment_qr(
         "status": "created",
         "receipt_url": None,
     }
+
+    # Store payment in database
+    db = SessionLocal()
+    try:
+        payment = Payment(
+            operation_id=result.operation_id,
+            amount=amount,
+            status="created",
+            kaspi_info={
+                "qr_token": result.qr_token,
+                "qr_original_token": result.qr_original_token,
+                "expire_date": result.expire_date,
+            },
+        )
+        db.add(payment)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save payment to DB: {e}")
+    finally:
+        db.close()
 
     return CreateQrResponse(
         operation_id=result.operation_id,
@@ -209,6 +232,34 @@ async def kaspi_webhook(
             _payments[payment_id]["status"] = "failed"
         elif event == "payment.expired":
             _payments[payment_id]["status"] = "expired"
+
+    # Update database
+    status_map = {
+        "payment.success": "paid",
+        "payment.failed": "failed",
+        "payment.expired": "expired",
+        "payment.lost": "lost",
+    }
+    db_status = status_map.get(event)
+    if db_status:
+        db = SessionLocal()
+        try:
+            db_payment = db.query(Payment).filter(Payment.operation_id == payment_id).first()
+            if db_payment:
+                db_payment.status = db_status
+                if payload.get("receiptUrl"):
+                    kaspi_info = db_payment.kaspi_info or {}
+                    kaspi_info["receipt_url"] = payload.get("receiptUrl")
+                    kaspi_info["webhook_event"] = event
+                    kaspi_info["webhook_payload"] = payload
+                    db_payment.kaspi_info = kaspi_info
+                db.commit()
+                logger.info(f"Payment {payment_id} updated to {db_status} in DB")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to update payment in DB: {e}")
+        finally:
+            db.close()
 
     return {"received": True}
 

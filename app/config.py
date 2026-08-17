@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # SIGEX eGov QR integration
     sigex_url: str = "https://sigex.kz"
 
+    # Database
+    database_url: str = "sqlite:///./salyq.db"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
